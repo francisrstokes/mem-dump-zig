@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const linux = std.os.linux;
 
+const Regex = @import("zigex").Regex;
+
 const PidError = error{ NoPidProvided, PidNotValid };
 const OutOfRangeError = error{OutOfRange};
 
@@ -29,21 +31,10 @@ pub fn read_maps_file(allocator: Allocator, pid: i32) ![]u8 {
     return file.readToEndAlloc(allocator, max_file_size);
 }
 
-pub fn get_hex_slice_at_position(str: []const u8, start_offset: usize) ![]const u8 {
-    var offset: usize = 0;
-
-    for (str[start_offset..]) |c| {
-        if ((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f')) {
-            offset += 1;
-            continue;
-        }
-        return str[start_offset .. start_offset + offset];
-    }
-    return OutOfRangeError.OutOfRange;
-}
-
 pub fn parse_maps_file(allocator: Allocator, file: []u8) !std.ArrayList(MapEntry) {
     var map_entries = std.ArrayList(MapEntry).init(allocator);
+    var re = try Regex.init(allocator, "([0-9a-f]+)-([0-9a-f]+) (...)", .{});
+    defer re.deinit();
 
     var it = std.mem.split(u8, file, "\n");
     while (it.next()) |line| {
@@ -51,19 +42,21 @@ pub fn parse_maps_file(allocator: Allocator, file: []u8) !std.ArrayList(MapEntry
             continue;
         }
 
-        const start_addr = try get_hex_slice_at_position(line, 0);
-        const end_addr = try get_hex_slice_at_position(line, start_addr.len + 1);
+        var match = (try re.match(line)).?;
+        defer match.deinit();
 
-        const ustart_addr = try std.fmt.parseInt(usize, start_addr, 16);
-        const uend_addr = try std.fmt.parseInt(usize, end_addr, 16);
+        const groups = try match.get_groups(allocator);
+        defer groups.deinit();
 
-        const perm_offset = start_addr.len + end_addr.len + 2;
+        const start_addr = try std.fmt.parseInt(usize, groups.items[0].?.value, 16);
+        const end_addr = try std.fmt.parseInt(usize, groups.items[1].?.value, 16);
 
-        const read = line[perm_offset + 0] == 'r';
-        const write = line[perm_offset + 1] == 'w';
-        const execute = line[perm_offset + 2] == 'x';
+        const permissions = groups.items[2].?.value;
+        const read = permissions[0] == 'r';
+        const write = permissions[1] == 'w';
+        const execute = permissions[2] == 'x';
 
-        try map_entries.append(.{ .start = ustart_addr, .end = uend_addr, .read = read, .write = write, .execute = execute });
+        try map_entries.append(.{ .start = start_addr, .end = end_addr, .read = read, .write = write, .execute = execute });
     }
 
     return map_entries;

@@ -7,5 +7,10 @@ pub fn build(b: *std.Build) void {
         .target = b.standardTargetOptions(.{}),
         .optimize = b.standardOptimizeOption(.{}),
     });
+
+    exe.addAnonymousModule("zigex", .{
+        .source_file = .{ .path = "libs/zigex/src/regex.zig" },
+    });
+
     b.installArtifact(exe);
 }
